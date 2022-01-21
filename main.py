@@ -1,14 +1,23 @@
+#%%
 from locale import currency
-import os
 from selenium import webdriver
 import time
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 import pandas as pd
 from selenium.webdriver.common.keys import Keys
-import datetime
-import calendar 
+from selenium.webdriver.chrome.options import Options
 
+import calendar 
+import numpy as np
+from time import strptime
+import datetime 
+import urllib.request
+from datetime import date, timedelta
+from currency_converter import ECB_URL, CurrencyConverter
+import os.path as op
+import os
+import sys
 
 class Actions:
     def __init__(self, driver, XpathDict, FligthPath = None):
@@ -16,10 +25,32 @@ class Actions:
         self.driver = driver
         self.FligthPath =  FligthPath
 
+
+  
+    def DownloadForexFile(self):
+        '''
+        Dowloads the FOREX rates adn returns the csv it contains
+        if already it just returns the filename
+        '''
+        ForexFolder = r"C:\Users\35386\Documents\projects\seleniumRyanair\ForexLoads"
+        ForexFolderContents  = [name for name in os.listdir(ForexFolder)]
+        todaysFileName = f"ecb_{date.today():%Y%m%d}.zip"
+        if len(ForexFolderContents) > 0:
+            for i in ForexFolderContents:
+                if i != todaysFileName:
+                    os.remove(os.path.join(ForexFolder, i ))
+        
+        filename = os.path.join(ForexFolder,  f"ecb_{date.today():%Y%m%d}.zip")
+        
+        if not op.isfile(filename):
+            urllib.request.urlretrieve(ECB_URL, filename)
+        return filename
+
+
     def ClickButton(self, xpathKey = None):
         try:
             #time.sleep(10)
-            self.driver.find_element_by_xpath(self.XpathDict[xpathKey]).click()
+            self.driver.find_element(By.XPATH,self.XpathDict[xpathKey]).click()
             #time.sleep(10)
             return True
             
@@ -28,7 +59,7 @@ class Actions:
 
     def InputData(self, xpathKey =None , input = None):
         try:
-            e = self.driver.find_element_by_xpath(self.XpathDict[xpathKey])
+            e = self.driver.find_element(By.XPATH,self.XpathDict[xpathKey])
             
             e.click()
             e.send_keys(Keys.CONTROL, 'a')
@@ -36,7 +67,7 @@ class Actions:
             e.send_keys(input)
             e.send_keys(Keys.ENTER)
 
-            k = self.driver.find_element_by_xpath(self.XpathDict[input])
+            k = self.driver.find_element(By.XPATH,self.XpathDict[input])
             k.click()
 
 
@@ -50,7 +81,7 @@ class Actions:
 
     def CheckFlightToday(self):
         try:
-            text =   driver.find_element_by_xpath(self.XpathDict["SorryNoFlightsAvailable"]).text
+            text =   driver.find_element(By.XPATH, self.XpathDict["SorryNoFlightsAvailable"]).text
             noFlighttext = 'Sorry, there are no flights available on this day'
 
             return True if  text == noFlighttext else False
@@ -59,18 +90,18 @@ class Actions:
             return False
 
 
-    def  AcquireListOfFlights(self,dateStr = None, departure = None, arrival = None):
+    def  AcquireListOfFlights(self,dateStr = None, departure = None, arrival = None, url = None):
         listOne = []
         Departtime, ArrivalTime, price  = (None,)*3
 
-        str1 =   driver.find_element_by_xpath(self.XpathDict["FlightList"]).text
+        str1 =   driver.find_element(By.XPATH,self.XpathDict["FlightList"]).text
 
         str1 = str1.split("Ryanair")
         if "" in str1:
                 str1.remove("")
   
         day =  day = calendar.day_name[self.FligthPath["startDate"].weekday()] 
-
+        month = self.FligthPath["startDate"].strftime("%b")
      
         stringsToremove = "€£"
         for values in str1:
@@ -96,7 +127,7 @@ class Actions:
                 price = price.replace(i, "")
 
 
-            listOne.append([departure,arrival,dateStr,day, Departtime,ArrivalTime,price])
+            listOne.append([departure,arrival,dateStr,day,month,  Departtime,ArrivalTime,price, url])
             Departtime,ArrivalTime,price = (None,)*3 # reassign values to None
             #arrivalTime =splits[1]
 
@@ -122,27 +153,33 @@ XPathsDict = {
 airportDict = {"LdnStn": "STN",
     "Ancona":"AOI",
     "Knock": "NOC",
-    "Dublin": "DUB"
+    "Dublin": "DUB",
+    "Rimini": "RMI"
     }
+options = Options()
+options.add_argument('--headless')
 
-driver = webdriver.Chrome()
+
+driver = webdriver.Chrome(chrome_options=options)
 
 
 # Create the dictionary flight path here
 FlightPath = {
-    "Connection1": {"departure":airportDict['Dublin'],
+    "From": "Ancona",
+    "To": "Knock",
+    "Connection1": {"departure":airportDict['Knock'],
                     "arrival": airportDict['LdnStn']},
 
     "Connection2": {"departure":airportDict['LdnStn'],
                     "arrival": airportDict['Ancona']},
         
-    "startDate": datetime.date(2022, 2, 11),
-    "endDate": datetime.date(2022, 2, 16)
+    "startDate": datetime.date(2022, 6, 11),
+    "endDate": datetime.date(2022, 6, 22)
 }
 
 
 action = Actions(driver, XPathsDict, FligthPath = FlightPath )
-
+currConvert = CurrencyConverter(action.DownloadForexFile(), fallback_on_missing_rate=True)
 
 # Dates Here
 #startDate = datetime.date.today()
@@ -173,14 +210,14 @@ for flightInfo in FlightPath:
             action.ClickButton("Button1")
             currencySymbol = ""
             if not action.CheckFlightToday():
-                lists = action.AcquireListOfFlights(dateStr = dateStr, departure = departure, arrival = arrival)
+                lists = action.AcquireListOfFlights(dateStr = dateStr, departure = departure, arrival = arrival, url = url)
                 listOne.extend(lists["listOne"])
             FlightPath["startDate"] += delta # increment day by 1
             enddateCopy = FlightPath["endDate"].strftime("%Y-%m-%d")
 
 
-        c = ["departure","Arrival","Date","day","DepartTime","ArrivalTime",f"cost({lists['Currency']})" ]
-
+        c = ["departure","Arrival","Date","day", "month", "DepartTime","ArrivalTime",f"cost({lists['Currency']})", "url" ]
+      
         if flightInfo == "Connection1":
             df = pd.DataFrame(listOne, columns = c)
             df[f"cost({lists['Currency']})"] = df[f"cost({lists['Currency']})"].astype(float)
@@ -188,10 +225,43 @@ for flightInfo in FlightPath:
             df2 = pd.DataFrame(listOne, columns = c)
             df2[f"cost({lists['Currency']})"] = df2[f"cost({lists['Currency']})"].astype(float)
             #df.to_excel(rf"C:\Users\35386\Documents\projects\seleniumRyanair\{departure}_{arrival}_{datetartCopy}_{enddateCopy}_{timeNow}.xlsx", index = False)
-newDf = df.merge(df2, left_on='Date', right_on='Date')
-newDF 
-newDf.to_excel(rf"C:\Users\35386\Documents\projects\seleniumRyanair\{departure}_{arrival}_{datetartCopy}_{enddateCopy}_{timeNow}.xlsx", index = False)
+
+
+newDF = df.merge(df2, left_on='Date', right_on='Date')
+if newDF.shape[0] == 0:
+    print("Nothing to Merge")
+    sys.exit()
+
+########### Post processing ####################
+
+columns = [i for i in newDF.columns if "£"  in i]
+newDF["Total(€)"]  = newDF["cost(€)"]
+
+for pound in columns:
+    newDF[f"{pound}_Convert"] =  newDF[pound].apply(lambda x: currConvert.convert(x, 'GBP', 'EUR', date=date.today() - timedelta(days = 1)))
+    newDF["Total(€)"] = newDF["Total(€)"] + newDF[f"{pound}_Convert"]
+
+
+
+newDF["datetimeDepartX"]= [datetime.datetime.strptime(i, "%H:%M") for i in newDF["DepartTime_x"] ]
+newDF["datetimeArriveX"] = [datetime.datetime.strptime(i, "%H:%M") for i in newDF["ArrivalTime_x"] ]
+
+newDF["datetimeDepartY"]= [datetime.datetime.strptime(i, "%H:%M") for i in newDF["DepartTime_y"] ]
+newDF["datetimeArriveY"] = [datetime.datetime.strptime(i, "%H:%M") for i in newDF["ArrivalTime_y"] ]
+
+newDF['suits'] = np.where(newDF["datetimeArriveX"]  <=  newDF["datetimeDepartY"] , True, False)
+newDF['layovertime'] =  np.where(newDF["suits"] == True, newDF["datetimeDepartY"] - newDF["datetimeArriveX"], False  ) 
+newDF['layovertime'] =  newDF['layovertime'].astype(str)
+newDF["TotalTravelTime"] =  np.where(newDF["suits"] == True, newDF["datetimeArriveY"] - newDF["datetimeDepartX"] , False  ) 
+newDF['TotalTravelTime'] =  newDF['TotalTravelTime'].astype(str)
+newDF["Total(€)"] = newDF["Total(€)"].apply(lambda x: round(x,2))
+
+################################# END POSTPROCESSING ##############################
+
+newDF.to_excel(rf"C:\Users\35386\Documents\projects\seleniumRyanair\{FlightPath['From']}_TO_{FlightPath['To']}_{datetartCopy}_{enddateCopy}_{timeNow}.xlsx")
 
 driver.close()
 
 
+
+# %%
