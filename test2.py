@@ -136,6 +136,66 @@ class Actions:
             return i
         else: return None
 
+    def ConstructDatetimesFromList(self, time1):
+        CurrentListDateTimes = []
+        if self.FlightPath["startDate"].strftime("%y") == self.FlightPath["endDate"].strftime("%y"):
+            currency = "€" if "€" in time1 else "£"
+            year = self.FlightPath["startDate"].strftime("%y")
+            #make Datetime
+            splits  = time1.split(currency)
+
+
+            
+            for j in splits:
+                list1 = [i for i in j]
+
+                for  count, i in enumerate(list1):
+                    if i.isdigit() or i == ".": continue
+                    else:
+                        
+                        newString = f"{''.join(list1[count-2:count+3])}{year}"
+                        CurrentListDateTimes.append(datetime.datetime.strptime(newString, "%d%b%y").date())
+                
+                        break
+        # process the dateTimes
+        countElementToremove = []
+        trimmedList = []
+        for count, date1 in enumerate(CurrentListDateTimes):
+            
+            if date1 >= self.FlightPath["startDate"] and date1 <= self.FlightPath["endDate"]:
+                trimmedList.append(date1)
+
+        return(trimmedList)
+
+    def ObtainLists(self, driver):
+        try:
+            time.sleep(5)
+            FullUL = f"/html/body/flights-root/div/div[1]/div/div/flights-lazy-content/flights-summary-container/flights-summary/div/div[1]/journey-container/journey/div/div[2]/div/carousel-container/carousel/div/ul"
+            ULText = driver.find_element(By.XPATH,FullUL).text.replace("\n", "")
+            # constructDatetimesFromThis
+            DatetimeList = self.ConstructDatetimesFromList(ULText)
+            buttonon = f"/html/body/flights-root/div/div[1]/div/div/flights-lazy-content/flights-summary-container/flights-summary/div/div[1]/journey-container/journey/div/div[2]/div/carousel-container/carousel/div/button[2]"
+            count = 4
+
+            while True:
+                
+                if count%5 == 0:
+                    driver.find_element(By.XPATH,buttonon).click()
+ 
+                    
+                xpath = f"/html/body/flights-root/div/div[1]/div/div/flights-lazy-content/flights-summary-container/flights-summary/div/div[1]/journey-container/journey/div/div[2]/div/carousel-container/carousel/div/ul/li[{count}]"
+                str1 =  driver.find_element(By.XPATH,xpath)
+                listText  = driver.find_element(By.XPATH,FullUL)
+                print(listText.text.replace("\n", ""))
+                print(self.FlightPath)
+
+                str1.click()
+                print(str1)
+                count +=1
+        except Exception as err:
+            print(err)
+            
+
 
     def  AcquireListOfFlights(self,driver = None ,dateStr = None, departure = None, arrival = None, url = None):
         listOne = []
@@ -196,7 +256,9 @@ def main():
     listOne = []
     XPathsDict = {
         "Button1": '//*[@id="cookie-popup-with-overlay"]/div/div[3]/button[2]', # first button to verify cookies
-        "FlightList": '/html/body/flights-root/div/div/div/div/flights-lazy-content/flights-summary-container/flights-summary/div/div[1]/journey-container/journey/flight-list'
+        "FlightList": '/html/body/flights-root/div/div/div/div/flights-lazy-content/flights-summary-container/flights-summary/div/div[1]/journey-container/journey/flight-list',
+        "List1": '/html/body/flights-root/div/div[1]/div/div/flights-lazy-content/flights-summary-container/flights-summary/div/div[1]/journey-container/journey/div/div[2]/div/carousel-container/carousel/div/ul',
+        "offsetButton": "/html/body/flights-root/div/div[1]/div/div/flights-lazy-content/flights-summary-container/flights-summary/div/div[1]/journey-container/journey/div/div[2]/div/carousel-container/carousel/div/ul/li[4]/carousel-item/button"
     }
 
     airportDict = {"London Stansted": "STN",
@@ -215,6 +277,8 @@ def main():
         }
     options = Options()
     #options.add_argument('--headless')
+    options.add_argument("--start-maximized")
+
 
 
     driver = webdriver.Chrome(chrome_options=options)
@@ -253,13 +317,13 @@ def main():
     for flightInfo in FlightPath:
         listOne = []
         if "Connection" in flightInfo:
-            FlightPath["startDate"]  =  datetime.datetime.strptime(datetartCopy, "%Y-%m-%d") # reseting the dates back for the second run if needed
+            FlightPath["startDate"]  =  datetime.datetime.strptime(datetartCopy, "%Y-%m-%d").date() # reseting the dates back for the second run if needed
 
             departure = FlightPath[flightInfo]['departure']
             arrival = FlightPath[flightInfo]['arrival']
                 
 
-            while FlightPath["startDate"].date() <= FlightPath["endDate"]:
+            while FlightPath["startDate"]<= FlightPath["endDate"]:
                 dateStr = FlightPath["startDate"].strftime("%Y-%m-%d")
                 if arrival in airportDict["CHECKURL"] or departure in airportDict["CHECKURL"]:
                     if arrival in airportDict["CHECKURL"] and departure in airportDict["CHECKURL"]:
@@ -277,7 +341,9 @@ def main():
 
                 action.ClickButton("Button1")
                 currencySymbol = ""
+                action.ObtainLists(driver)
                 if not action.CheckFlightToday():
+                    
                     lists = action.AcquireListOfFlights(driver = driver,dateStr = dateStr, departure = departure, arrival = arrival, url = url)
                     listOne.extend(lists["listOne"])
                 FlightPath["startDate"] += delta # increment day by 1
