@@ -404,6 +404,7 @@ class FlightDataCreator():
         self.XPathsDict = {
         "Button1": '//*[@id="cookie-popup-with-overlay"]/div/div[3]/button[2]', # first button to verify cookies
         "FlightList": '/html/body/flights-root/div/div/div/div/flights-lazy-content/flights-summary-container/flights-summary/div/div[1]/journey-container/journey/flight-list'
+        "So"
         }
 
         self.startDate = datetime.date(2022, 3, 1 ) 

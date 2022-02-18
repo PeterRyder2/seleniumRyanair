@@ -7,6 +7,7 @@ from selenium.webdriver.common.by import By
 import pandas as pd
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.options import Options
+from selenium.common.exceptions import NoSuchElementException        
 
 import calendar 
 import numpy as np
@@ -19,6 +20,7 @@ import os.path as op
 import os
 import sys
 import zipfile
+import re
 
 
 class Actions:
@@ -28,6 +30,7 @@ class Actions:
         self.FlightPath =  FligthPath
         self.delta = datetime.timedelta(days=1)
         self.airportList = airportList
+        self.CurrentListDateTimes = None
 
     def DirectFlightDF(self,departure, arrival, newDF ):
         listOne = []
@@ -88,16 +91,26 @@ class Actions:
 
         return {"filename": filename, "date_to_use": datetime.datetime.strptime(date1, "%Y-%M-%d")}
 
+    def check_exists_by_xpath(self,xpath):
+
+        try:
+            self.driver.find_element_by_xpath(xpath)
+        except NoSuchElementException:
+            return False
+        return True
 
     def ClickButton(self, xpathKey = None):
-        try:
-            #time.sleep(10)
-            self.driver.find_element(By.XPATH,self.XpathDict[xpathKey]).click()
-            #time.sleep(10)
-            return True
-            
-        except Exception as err:
-            return False
+
+        if "List4Button" ==  xpathKey:
+            for xpath in self.XpathDict[xpathKey]:
+                if self.check_exists_by_xpath(xpath):
+                    self.driver.find_element(By.XPATH,xpath).click()
+                    return True
+        else: 
+            if self.check_exists_by_xpath(self.XpathDict[xpathKey]):
+                self.driver.find_element(By.XPATH,self.XpathDict[xpathKey]).click()
+                return True
+        return False
 
     def InputData(self, xpathKey =None , input = None):
         try:
@@ -123,7 +136,10 @@ class Actions:
 
     def CheckFlightToday(self):
         try:
-            text =   self.driver.find_element(By.XPATH, self.XpathDict["SorryNoFlightsAvailable"]).text
+
+            f = "/html/body/flights-root/div/div/div/div/flights-lazy-content/flights-summary-container/flights-summary/div/div[1]/journey-container/journey/flight-list/p"
+            text =   self.driver.find_element(By.XPATH, f).text
+
             noFlighttext = 'Sorry, there are no flights available on this day'
 
             return True if  text == noFlighttext else False
@@ -136,80 +152,87 @@ class Actions:
             return i
         else: return None
 
-    def ConstructDatetimesFromList(self, time1):
+    def ConstructDatetimesFromList(self):
+        FullUL = f"/html/body/flights-root/div/div[1]/div/div/flights-lazy-content/flights-summary-container/flights-summary/div/div[1]/journey-container/journey/div/div[2]/div/carousel-container/carousel/div/ul"
+        ULText = self.driver.find_element(By.XPATH,FullUL).text.replace("\n", "")
+        ULText = ULText.upper()
+        # constructDatetimesFromThis
+
         CurrentListDateTimes = []
         if self.FlightPath["startDate"].strftime("%y") == self.FlightPath["endDate"].strftime("%y"):
-            currency = "€" if "€" in time1 else "£"
+            currency = "€" if "€" in ULText else "£"
             year = self.FlightPath["startDate"].strftime("%y")
             #make Datetime
-            splits  = time1.split(currency)
+            splits  = ULText.split("DAY")
+
+            splits = [f"{i}day" for i in splits]
+            Months =["JAN","FEB","MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
 
 
+            for date in splits:
+                for month in Months:
+                    if month in date:
+                        pattern =  f"\d\d{month}"
+                        v = re.search(pattern, date)
+                        if v != None:
+                            newString = f"{v.string[v.regs[0][0]:v.regs[0][1]]}{year}"
+                            CurrentListDateTimes.append(datetime.datetime.strptime(newString, "%d%b%y").date())
+                            print(newString)
+                            break
+        
+        self.CurrentListDateTimes = CurrentListDateTimes
+
+      
+        return(CurrentListDateTimes)
+
+    def CheckUnlistValidaty(self ):
+
+        '''
+        Returns false if the endate has been reached
+        '''
+        if self.CurrentListDateTimes[2] > self.FlightPath["endDate"]:
             
-            for j in splits:
-                list1 = [i for i in j]
-
-                for  count, i in enumerate(list1):
-                    if i.isdigit() or i == ".": continue
-                    else:
-                        
-                        newString = f"{''.join(list1[count-2:count+3])}{year}"
-                        CurrentListDateTimes.append(datetime.datetime.strptime(newString, "%d%b%y").date())
-                
-                        break
-        # process the dateTimes
-        countElementToremove = []
-        trimmedList = []
-        for count, date1 in enumerate(CurrentListDateTimes):
+            return False
+        else: return True
             
-            if date1 >= self.FlightPath["startDate"] and date1 <= self.FlightPath["endDate"]:
-                trimmedList.append(date1)
+    def GetUrl(self, flightInfo = None):
+        departure = self.FlightPath[flightInfo]['departure']
+        arrival = self.FlightPath[flightInfo]['arrival']
+        dateStr = self.FlightPath["startDate"].strftime("%Y-%m-%d")
+        url = None
+        if arrival in self.airportList["CHECKURL"] or departure in self.airportList["CHECKURL"]:
+            if arrival in self.airportList["CHECKURL"] and departure in self.airportList["CHECKURL"]:
+                url = f"https://www.ryanair.com/ie/en/trip/flights/select?adults=1&teens=0&children=0&infants=0&dateOut={dateStr}&dateIn=&isConnectedFlight=false&isReturn=false&discount=0&promoCode=&originMac={departure}&destinationMac={arrival}&tpAdults=1&tpTeens=0&tpChildren=0&tpInfants=0&tpStartDate={dateStr}&tpEndDate=&tpDiscount=0&tpPromoCode=&tpOriginMac={departure}&tpDestinationMac={arrival}"
+            elif departure in self.airportList["CHECKURL"]:
+                url = f"https://www.ryanair.com/ie/en/trip/flights/select?adults=1&teens=0&children=0&infants=0&dateOut={dateStr}&dateIn=&isConnectedFlight=false&discount=0&isReturn=false&promoCode=&originMac={departure}&destinationIata={arrival}&tpAdults=1&tpTeens=0&tpChildren=0&tpInfants=0&tpStartDate={dateStr}&tpEndDate=&tpDiscount=0&tpPromoCode=&tpOriginMac={departure}&tpDestinationIata={arrival}"
+            elif arrival in self.airportList["CHECKURL"]:
+                url = f"https://www.ryanair.com/ie/en/trip/flights/select?adults=1&teens=0&children=0&infants=0&dateOut={dateStr}&dateIn=&isConnectedFlight=false&discount=0&isReturn=false&promoCode=&originMac={departure}&destinationIata={arrival}&tpAdults=1&tpTeens=0&tpChildren=0&tpInfants=0&tpStartDate={dateStr}&tpEndDate=&tpDiscount=0&tpPromoCode=&tpOriginMac={departure}&tpDestinationIata={arrival}"
+        else:
+            # there is no ALL search terms in the arrival or destinations 
+            url = f"https://www.ryanair.com/ie/en/trip/flights/select?adults=1&teens=0&children=0&infants=0&dateOut={dateStr}&dateIn=&isConnectedFlight=false&isReturn=false&discount=0&promoCode=&originIata={departure}&destinationIata={arrival}&tpAdults=1&tpTeens=0&tpChildren=0&tpInfants=0&tpStartDate={dateStr}&tpEndDate=&tpDiscount=0&tpPromoCode=&tpOriginIata={departure}&tpDestinationIata={arrival}"
+        
+        return url
 
-        return(trimmedList)
-
-    def ObtainLists(self, driver):
-        try:
-            time.sleep(5)
-            FullUL = f"/html/body/flights-root/div/div[1]/div/div/flights-lazy-content/flights-summary-container/flights-summary/div/div[1]/journey-container/journey/div/div[2]/div/carousel-container/carousel/div/ul"
-            ULText = driver.find_element(By.XPATH,FullUL).text.replace("\n", "")
-            # constructDatetimesFromThis
-            DatetimeList = self.ConstructDatetimesFromList(ULText)
-            buttonon = f"/html/body/flights-root/div/div[1]/div/div/flights-lazy-content/flights-summary-container/flights-summary/div/div[1]/journey-container/journey/div/div[2]/div/carousel-container/carousel/div/button[2]"
-            count = 4
-
-            while True:
-                
-                if count%5 == 0:
-                    driver.find_element(By.XPATH,buttonon).click()
- 
-                    
-                xpath = f"/html/body/flights-root/div/div[1]/div/div/flights-lazy-content/flights-summary-container/flights-summary/div/div[1]/journey-container/journey/div/div[2]/div/carousel-container/carousel/div/ul/li[{count}]"
-                str1 =  driver.find_element(By.XPATH,xpath)
-                listText  = driver.find_element(By.XPATH,FullUL)
-                print(listText.text.replace("\n", ""))
-                print(self.FlightPath)
-
-                str1.click()
-                print(str1)
-                count +=1
-        except Exception as err:
-            print(err)
-            
+    
 
 
     def  AcquireListOfFlights(self,driver = None ,dateStr = None, departure = None, arrival = None, url = None):
+        
+        
         listOne = []
         DepartString, ArriveString, Departtime, ArrivalTime, price  = (None,)*5
 
         time.sleep(5)
         str1 =   driver.find_element(By.XPATH,self.XpathDict["FlightList"]).text
+      
+        str2 = driver.find_element(By.XPATH,"/html/body/flights-root/div/div/div/div/flights-lazy-content/flights-summary-container/flights-summary/div/div[1]/journey-container/journey/flight-list/div").text
 
         str1 = str1.split("Ryanair")
         if "" in str1:
                 str1.remove("")
-  
-        day =  day = calendar.day_name[self.FlightPath["startDate"].weekday()] 
-        month = self.FlightPath["startDate"].strftime("%b")
+        dateObj = datetime.datetime.strptime(dateStr, "%Y-%m-%d")
+        day =  day = calendar.day_name[dateObj.weekday()] 
+        month = dateObj.strftime("%b")
      
         stringsToremove = "€£"
         for values in str1:
@@ -256,9 +279,13 @@ def main():
     listOne = []
     XPathsDict = {
         "Button1": '//*[@id="cookie-popup-with-overlay"]/div/div[3]/button[2]', # first button to verify cookies
-        "FlightList": '/html/body/flights-root/div/div/div/div/flights-lazy-content/flights-summary-container/flights-summary/div/div[1]/journey-container/journey/flight-list',
+        "FlightList": "/html/body/flights-root/div/div/div/div/flights-lazy-content/flights-summary-container/flights-summary/div/div[1]/journey-container/journey/flight-list/div",
+        
         "List1": '/html/body/flights-root/div/div[1]/div/div/flights-lazy-content/flights-summary-container/flights-summary/div/div[1]/journey-container/journey/div/div[2]/div/carousel-container/carousel/div/ul',
-        "offsetButton": "/html/body/flights-root/div/div[1]/div/div/flights-lazy-content/flights-summary-container/flights-summary/div/div[1]/journey-container/journey/div/div[2]/div/carousel-container/carousel/div/ul/li[4]/carousel-item/button"
+        "List4Button": [ "/html/body/flights-root/div/div[1]/div/div/flights-lazy-content/flights-summary-container/flights-summary/div/div[1]/journey-container/journey/div/div[2]/div/carousel-container/carousel/div/ul/li[4]",
+                        "/html/body/flights-root/div/div/div/div/flights-lazy-content/flights-summary-container/flights-summary/div/div[1]/journey-container/journey/div/div[2]/div/carousel-container/carousel/div/ul/li[4]"],
+        "SorryNoFilightAvailable": "/html/body/flights-root/div/div/div/div/flights-lazy-content/flights-summary-container/flights-summary/div/div[1]/journey-container/journey/flight-list/p",
+        "ErrorButton": '//*[@id="ry-modal-portal"]/div/trip-error-handling-modal/div/div[2]/button'
     }
 
     airportDict = {"London Stansted": "STN",
@@ -290,15 +317,15 @@ def main():
 
     FlightPath = {
 
-        "Connection1": {"departure":airportDict['MilanAll'],
-                        "arrival": airportDict['LondonAll']},
+        "Connection1": {"departure":airportDict['Ancona'],
+                        "arrival": airportDict['London Stansted']},
 
-        "Connection2": {"departure":airportDict['LondonAll'],
+        "Connection2": {"departure":airportDict['London Stansted'],
                         "arrival": airportDict['Knock']},
         
        
-        "startDate": datetime.date(2022, 3, 1 ),
-        "endDate": datetime.date(2022, 3, 4)
+        "startDate": datetime.date(2022, 5, 20 ),
+        "endDate": datetime.date(2022, 5, 30)
     }
     FlightPath["From"]= FlightPath['Connection1']['departure']
     FlightPath["To"]= FlightPath['Connection2']['arrival']
@@ -309,6 +336,7 @@ def main():
     # Dates Here
     #startDate = datetime.date.today()
     datetartCopy = FlightPath["startDate"].strftime("%Y-%m-%d")
+    dateEndCopy = FlightPath["endDate"].strftime("%Y-%m-%d")
     timeNow = datetime.datetime.now().strftime("%Y-%m-%d%H%m%S")
 
     delta = datetime.timedelta(days=1)
@@ -321,33 +349,31 @@ def main():
 
             departure = FlightPath[flightInfo]['departure']
             arrival = FlightPath[flightInfo]['arrival']
-                
+            dateStr = FlightPath["startDate"].strftime("%Y-%m-%d")
 
-            while FlightPath["startDate"]<= FlightPath["endDate"]:
-                dateStr = FlightPath["startDate"].strftime("%Y-%m-%d")
-                if arrival in airportDict["CHECKURL"] or departure in airportDict["CHECKURL"]:
-                    if arrival in airportDict["CHECKURL"] and departure in airportDict["CHECKURL"]:
-                        url = f"https://www.ryanair.com/ie/en/trip/flights/select?adults=1&teens=0&children=0&infants=0&dateOut={dateStr}&dateIn=&isConnectedFlight=false&isReturn=false&discount=0&promoCode=&originMac={departure}&destinationMac={arrival}&tpAdults=1&tpTeens=0&tpChildren=0&tpInfants=0&tpStartDate={dateStr}&tpEndDate=&tpDiscount=0&tpPromoCode=&tpOriginMac={departure}&tpDestinationMac={arrival}"
-                    elif departure in airportDict["CHECKURL"]:
-                        url = f"https://www.ryanair.com/ie/en/trip/flights/select?adults=1&teens=0&children=0&infants=0&dateOut={dateStr}&dateIn=&isConnectedFlight=false&discount=0&isReturn=false&promoCode=&originMac={departure}&destinationIata={arrival}&tpAdults=1&tpTeens=0&tpChildren=0&tpInfants=0&tpStartDate={dateStr}&tpEndDate=&tpDiscount=0&tpPromoCode=&tpOriginMac={departure}&tpDestinationIata={arrival}"
-                    elif arrival in airportDict["CHECKURL"]:
-                        url = f"https://www.ryanair.com/ie/en/trip/flights/select?adults=1&teens=0&children=0&infants=0&dateOut={dateStr}&dateIn=&isConnectedFlight=false&discount=0&isReturn=false&promoCode=&originMac={departure}&destinationIata={arrival}&tpAdults=1&tpTeens=0&tpChildren=0&tpInfants=0&tpStartDate={dateStr}&tpEndDate=&tpDiscount=0&tpPromoCode=&tpOriginMac={departure}&tpDestinationIata={arrival}"
-                else:
-                    # there is no ALL search terms in the arrival or destinations 
-                    url = f"https://www.ryanair.com/ie/en/trip/flights/select?adults=1&teens=0&children=0&infants=0&dateOut={dateStr}&dateIn=&isConnectedFlight=false&isReturn=false&discount=0&promoCode=&originIata={departure}&destinationIata={arrival}&tpAdults=1&tpTeens=0&tpChildren=0&tpInfants=0&tpStartDate={dateStr}&tpEndDate=&tpDiscount=0&tpPromoCode=&tpOriginIata={departure}&tpDestinationIata={arrival}"
-                
-                driver.get(url)
-                time.sleep(5)
 
-                action.ClickButton("Button1")
-                currencySymbol = ""
-                action.ObtainLists(driver)
+                                
+            url = action.GetUrl(flightInfo = flightInfo)  
+            driver.get( url)
+            time.sleep(10)
+            action.ClickButton("Button1")
+            currencySymbol = ""
+            time.sleep(1)
+            action.ClickButton("ErrorButton")
+
+            # Get the Unordered List
+            DatetimeList = action.ConstructDatetimesFromList()
+            while action.CheckUnlistValidaty(): # checks that the current data does not match enddate
+
+            
+        
                 if not action.CheckFlightToday():
-                    
-                    lists = action.AcquireListOfFlights(driver = driver,dateStr = dateStr, departure = departure, arrival = arrival, url = url)
+                    currentDate = DatetimeList[2].strftime("%Y-%m-%d")
+                    lists = action.AcquireListOfFlights(driver = driver,dateStr = currentDate, departure = departure, arrival = arrival, url = url)
                     listOne.extend(lists["listOne"])
-                FlightPath["startDate"] += delta # increment day by 1
-                enddateCopy = FlightPath["endDate"].strftime("%Y-%m-%d")
+                action.ClickButton("List4Button")
+                DatetimeList  =action.ConstructDatetimesFromList() # get the new list
+
 
 
             c = ["departure","Arrival","Date","day", "month", "DepartTime","ArrivalTime",f"cost({lists['Currency']})", "url" ]
@@ -445,7 +471,7 @@ def main():
     #newDF = action.DirectFlightDF("Knock", "Milan Bergamo", newDF)
     
 
-    newDF.to_excel(rf"C:\Users\35386\Documents\projects\seleniumRyanair\{FlightPath['From']}_TO_{FlightPath['To']}_{datetartCopy}_{enddateCopy}_{timeNow}.xlsx", index  = False)
+    newDF.to_excel(rf"C:\Users\35386\Documents\projects\seleniumRyanair\{FlightPath['From']}_TO_{FlightPath['To']}_{datetartCopy}_{dateEndCopy}_{timeNow}.xlsx", index  = False)
 
     driver.close()
 
