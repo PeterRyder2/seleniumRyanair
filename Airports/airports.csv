@@ -1,0 +1,62 @@
+﻿Airport,RyanairTitle,IATA,CheckAll
+Alghero Airport,Alghero,AHO,0
+Ancona Airport,,AOI,0
+Bari Airport,Bari,BRI,0
+Bergamo Airport,Milan Bergamo,BGY,0
+Bologna Airport,Bologna,BLQ,0
+Brindisi Airport,,BDS,0
+Cagliari Airport,Cagliari,CAG,0
+Catania Fontanarossa Airport,,CTA,0
+Comiso Airport,,CIY,0
+Florence Airport,,FLR,0
+Genoa Airport,,GOA,0
+Lamezia Terme Airport,,SUF,0
+Milan Linate Airport,,LIN,0
+Milan Malpensa Airport,Milan Malpensa,MXP,0
+Naples Airport,Naples,NAP,0
+Olbia Costa Smeralda Airport,,OLB,0
+Palermo Airport,Palermo,PMO,0
+Perugia Airport,,PEG,0
+Pescara Airport,,PSR,0
+Pisa Airport,Pisa,PSA,0
+Rome Ciampino Airport,Rome Ciampino,CIA,0
+Rome Fiumicino Airport,,FCO,0
+Trapani Airport,,TPS,0
+Treviso Airport,,TSF,0
+Trieste Airport,,TRS,0
+Turin Airport,Turin,TRN,0
+Venice Airport,Venice Treviso,VCE,0
+Verona Airport,Verona,VRN,0
+Aberdeen Airport,,ABZ,0
+Bournemouth,Bournemouth,BOH,0
+Belfast City Airport,,BHD,0
+Belfast International Airport,,BFS,0
+Birmingham Airport,Birmingham,BHX,0
+Bristol Airport,Bristol,BRS,0
+Cardiff Airport,Cardiff,CWL,0
+Doncaster Sheffield Airport,,DSA,0
+East Midlands Airport,East Midlands,EMA,0
+Edinburgh Airport,Edinburgh,EDI,0
+Exeter Airport,,EXT,0
+Glasgow Airport,Glasgow,GLA,0
+Glasgow Prestwick Airport,,PIK,0
+Humberside Airport,,HUY,0
+Jersey Airport,,JER,0
+Leeds Bradford Airport,Leeds Bradford,LBA,0
+Liverpool Airport,Liverpool,LPL,0
+London City Airport,,LCY,0
+London Gatwick Airport,London Gatwick,LGW,0
+London Heathrow Airport,,LHR,0
+London Luton Airport,London Luton,LTN,0
+London Southend Airport,,SEN,0
+London Stansted Airport,London Stansted,STN,0
+Manchester Airport,Manchester,MAN,0
+Newcastle Airport,Newcastle,NCL,0
+Southampton Airport,,SOU,0
+Dublin Airport,Dublin,DUB,0
+Cork Airport,Cork,ORK,0
+Shannon Airport,Shannon,SNN,0
+Ireland West Airport Knock,Knock,NOC,0
+Kerry Airport,Kerry,KIR,0
+MilanAll,,MIL,1
+LondonAll,,LON,1

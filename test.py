@@ -7,7 +7,7 @@ from selenium.webdriver.common.by import By
 import pandas as pd
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.options import Options
-
+import re
 import calendar 
 import numpy as np
 from time import strptime
@@ -19,15 +19,77 @@ import os.path as op
 import os
 import sys
 import zipfile
+from selenium.common.exceptions import NoSuchElementException        
 
 
 class Actions:
-    def __init__(self, driver, XpathDict, FligthPath = None, airportList = None):
+    def __init__(self, driver, XpathDict, airportdf = None,FligthPath = None, airportList = None):
         self.XpathDict = XpathDict
         self.driver = driver
         self.FlightPath =  FligthPath
         self.delta = datetime.timedelta(days=1)
         self.airportList = airportList
+        self.CurrentListDateTimes = None
+        self.airportdf =  airportdf
+
+    def ConstructDatetimesFromList(self, flightType = None, url = None):
+        FullUL = f"/html/body/flights-root/div/div[1]/div/div/flights-lazy-content/flights-summary-container/flights-summary/div/div[1]/journey-container/journey/div/div[2]/div/carousel-container/carousel/div/ul"
+        ULText = self.driver.find_element(By.XPATH,FullUL).text.replace("\n", "")
+        ULText = ULText.upper()
+        # constructDatetimesFromThis
+
+        CurrentListDateTimes = []
+        if self.FlightPath[flightType]["startDate"].strftime("%y") == self.FlightPath[flightType]["endDate"].strftime("%y"):
+            currency = "€" if "€" in ULText else "£"
+            year = self.FlightPath[flightType]["startDate"].strftime("%y")
+            #make Datetime
+            splits  = ULText.split("DAY")
+
+            splits = [f"{i}day" for i in splits]
+            Months =["JAN","FEB","MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
+
+
+            for date in splits:
+                for month in Months:
+                    if month in date:
+                        pattern =  f"\d\d{month}"
+                        v = re.search(pattern, date)
+                        if v != None:
+                            newString = f"{v.string[v.regs[0][0]:v.regs[0][1]]}{year}"
+                            CurrentListDateTimes.append(datetime.datetime.strptime(newString, "%d%b%y").date())
+                            print(newString)
+                            break
+        
+        self.CurrentListDateTimes = CurrentListDateTimes
+
+        self.CurrentListDateTimesDict = {}
+
+        v = re.search("\d\d\d\d-\d\d-\d\d", url)
+        for count, i in enumerate(CurrentListDateTimes):
+            newDate = f"{v.string[v.regs[0][0]:v.regs[0][1]]}"
+            self.CurrentListDateTimesDict[count] = [i, i.strftime("%Y-%m-%d"), url.replace(newDate, i.strftime("%Y-%m-%d")) ]
+
+
+        self.CurrentListDateTimes = self.CurrentListDateTimesDict
+      
+        return( self.CurrentListDateTimes)
+
+    def CheckUnlistValidaty(self , flightType= None):
+
+        '''
+        Returns false if the endate has been reached
+        '''
+        if self.CurrentListDateTimes[2][0] > self.FlightPath[flightType]["endDate"]:
+            
+            return False
+        else: return True
+    def check_exists_by_xpath(self,xpath):
+
+        try:
+            self.driver.find_element_by_xpath(xpath)
+        except NoSuchElementException:
+            return False
+        return True
 
     def DirectFlightDF(self,departure, arrival, newDF ):
         listOne = []
@@ -90,14 +152,16 @@ class Actions:
 
 
     def ClickButton(self, xpathKey = None):
-        try:
-            #time.sleep(10)
-            self.driver.find_element(By.XPATH,self.XpathDict[xpathKey]).click()
-            #time.sleep(10)
-            return True
-            
-        except Exception as err:
-            return False
+        if "List4Button" ==  xpathKey:
+            for xpath in self.XpathDict[xpathKey]:
+                if self.check_exists_by_xpath(xpath):
+                    self.driver.find_element(By.XPATH,xpath).click()
+                    return True
+        else: 
+            if self.check_exists_by_xpath(self.XpathDict[xpathKey]):
+                self.driver.find_element(By.XPATH,self.XpathDict[xpathKey]).click()
+                return True
+        return False
 
     def InputData(self, xpathKey =None , input = None):
         try:
@@ -131,25 +195,32 @@ class Actions:
 
             return False
 
-    def Checkdeparture(self, i):
-        if i in self.airportList.keys() or i in self.airportList.values():
+    def Checkdeparture(self, i): 
+
+        totalList  =list(self.airportdf["IATA"].values) + \
+                    list(self.airportdf["Airport"].values) + \
+                    list(self.airportdf["RyanairTitle"].values)
+        if i in totalList:
             return i
         else: return None
 
 
-    def  AcquireListOfFlights(self,driver = None ,dateStr = None, departure = None, arrival = None, url = None):
+    def  AcquireListOfFlights(self,flightType= None, driver = None ,dateStr = None, departure = None, arrival = None, url = None):
         listOne = []
         DepartString, ArriveString, Departtime, ArrivalTime, price  = (None,)*5
 
         time.sleep(5)
         str1 =   driver.find_element(By.XPATH,self.XpathDict["FlightList"]).text
+      
+        str2 = driver.find_element(By.XPATH,"/html/body/flights-root/div/div/div/div/flights-lazy-content/flights-summary-container/flights-summary/div/div[1]/journey-container/journey/flight-list/div").text
 
-        str1 = str1.split("Ryanair")
+        str1 = str1.split("Select")
+
         if "" in str1:
                 str1.remove("")
-  
-        day =  day = calendar.day_name[self.FlightPath["startDate"].weekday()] 
-        month = self.FlightPath["startDate"].strftime("%b")
+        dateObj = datetime.datetime.strptime(dateStr, "%Y-%m-%d")
+        day =  day = calendar.day_name[dateObj.weekday()] 
+        month = dateObj.strftime("%b")
      
         stringsToremove = "€£"
         for values in str1:
@@ -182,7 +253,7 @@ class Actions:
                 price = price.replace(i, "")
 
 
-            listOne.append([DepartString,ArriveString,dateStr,day,month,  Departtime,ArrivalTime,price, url])
+            listOne.append([DepartString,ArriveString,dateStr,day,month,  Departtime,ArrivalTime,price, flightType , url])
             DepartString, ArriveString,Departtime,ArrivalTime,price = (None,)*5 # reassign values to None
             #arrivalTime =splits[1]
 
@@ -190,317 +261,128 @@ class Actions:
 ##########################################################################################################################
 ##########################################################################################################################
 ##########################################################################################################################
-
-# def main():
-
-#     listOne = []
-#     XPathsDict = {
-#         "Button1": '//*[@id="cookie-popup-with-overlay"]/div/div[3]/button[2]', # first button to verify cookies
-#         "FlightList": '/html/body/flights-root/div/div/div/div/flights-lazy-content/flights-summary-container/flights-summary/div/div[1]/journey-container/journey/flight-list'
-#     }
-
-#     airportDict = {"London Stansted": "STN",
-#         "London Luton": "LTN",
-#         "Ancona":"AOI",
-#         "Bologna": "BLQ",
-#         "Knock": "NOC",
-#         "Dublin": "DUB",
-#         "Rimini": "RMI",
-#         "Milan Bergamo": "BGY",
-#         "LondonAll": "LON",
-#         "Pescara": "PSR",
-#         "Perugia": "PEG",
-#         "MilanAll": "MIL",
-#         "CHECKURL": ["LON", "MIL"] # add here if you user the all selection eg.  London ALL
-#         }
-#     options = Options()
-#     #options.add_argument('--headless')
-
-
-#     driver = webdriver.Chrome(chrome_options=options)
-
-#     FlightPath = {
-
-#         "Connection1": {"departure":airportDict['MilanAll'],
-#                         "arrival": airportDict['LondonAll']},
-
-#         "Connection2": {"departure":airportDict['LondonAll'],
-#                         "arrival": airportDict['Knock']},
-        
-       
-#         "startDate": datetime.date(2022, 3, 1 ),
-#         "endDate": datetime.date(2022, 3, 4)
-#     }
-#     FlightPath["From"]= FlightPath['Connection1']['departure']
-#     FlightPath["To"]= FlightPath['Connection2']['arrival']
-
-#     action = Actions(driver, XPathsDict, FligthPath = FlightPath, airportList=airportDict )
-#     ForexFileData = action.DownloadForexFile()
-#     currConvert = CurrencyConverter(ForexFileData['filename'], fallback_on_missing_rate=True)
-#     # Dates Here
-#     #startDate = datetime.date.today()
-#     datetartCopy = FlightPath["startDate"].strftime("%Y-%m-%d")
-#     timeNow = datetime.datetime.now().strftime("%Y-%m-%d%H%m%S")
-
-#     delta = datetime.timedelta(days=1)
-
-#     dfList = []
-#     for flightInfo in FlightPath:
-#         listOne = []
-#         if "Connection" in flightInfo:
-#             FlightPath["startDate"]  =  datetime.datetime.strptime(datetartCopy, "%Y-%m-%d") # reseting the dates back for the second run if needed
-
-#             departure = FlightPath[flightInfo]['departure']
-#             arrival = FlightPath[flightInfo]['arrival']
-                
-
-#             while FlightPath["startDate"].date() <= FlightPath["endDate"]:
-#                 dateStr = FlightPath["startDate"].strftime("%Y-%m-%d")
-#                 if arrival in airportDict["CHECKURL"] or departure in airportDict["CHECKURL"]:
-#                     if arrival in airportDict["CHECKURL"] and departure in airportDict["CHECKURL"]:
-#                         url = f"https://www.ryanair.com/ie/en/trip/flights/select?adults=1&teens=0&children=0&infants=0&dateOut={dateStr}&dateIn=&isConnectedFlight=false&isReturn=false&discount=0&promoCode=&originMac={departure}&destinationMac={arrival}&tpAdults=1&tpTeens=0&tpChildren=0&tpInfants=0&tpStartDate={dateStr}&tpEndDate=&tpDiscount=0&tpPromoCode=&tpOriginMac={departure}&tpDestinationMac={arrival}"
-#                     elif departure in airportDict["CHECKURL"]:
-#                         url = f"https://www.ryanair.com/ie/en/trip/flights/select?adults=1&teens=0&children=0&infants=0&dateOut={dateStr}&dateIn=&isConnectedFlight=false&discount=0&isReturn=false&promoCode=&originMac={departure}&destinationIata={arrival}&tpAdults=1&tpTeens=0&tpChildren=0&tpInfants=0&tpStartDate={dateStr}&tpEndDate=&tpDiscount=0&tpPromoCode=&tpOriginMac={departure}&tpDestinationIata={arrival}"
-#                     elif arrival in airportDict["CHECKURL"]:
-#                         url = f"https://www.ryanair.com/ie/en/trip/flights/select?adults=1&teens=0&children=0&infants=0&dateOut={dateStr}&dateIn=&isConnectedFlight=false&discount=0&isReturn=false&promoCode=&originMac={departure}&destinationIata={arrival}&tpAdults=1&tpTeens=0&tpChildren=0&tpInfants=0&tpStartDate={dateStr}&tpEndDate=&tpDiscount=0&tpPromoCode=&tpOriginMac={departure}&tpDestinationIata={arrival}"
-#                 else:
-#                     # there is no ALL search terms in the arrival or destinations 
-#                     url = f"https://www.ryanair.com/ie/en/trip/flights/select?adults=1&teens=0&children=0&infants=0&dateOut={dateStr}&dateIn=&isConnectedFlight=false&isReturn=false&discount=0&promoCode=&originIata={departure}&destinationIata={arrival}&tpAdults=1&tpTeens=0&tpChildren=0&tpInfants=0&tpStartDate={dateStr}&tpEndDate=&tpDiscount=0&tpPromoCode=&tpOriginIata={departure}&tpDestinationIata={arrival}"
-                
-#                 driver.get(url)
-#                 time.sleep(5)
-
-#                 action.ClickButton("Button1")
-#                 currencySymbol = ""
-#                 if not action.CheckFlightToday():
-#                     lists = action.AcquireListOfFlights(driver = driver,dateStr = dateStr, departure = departure, arrival = arrival, url = url)
-#                     listOne.extend(lists["listOne"])
-#                 FlightPath["startDate"] += delta # increment day by 1
-#                 enddateCopy = FlightPath["endDate"].strftime("%Y-%m-%d")
-
-
-#             c = ["departure","Arrival","Date","day", "month", "DepartTime","ArrivalTime",f"cost({lists['Currency']})", "url" ]
-        
-#             if flightInfo == "Connection1":
-#                 df = pd.DataFrame(listOne, columns = c)
-#                 df[f"cost({lists['Currency']})"] = df[f"cost({lists['Currency']})"].astype(float)
-#             if flightInfo == "Connection2":
-#                 df2 = pd.DataFrame(listOne, columns = c)
-#                 df2[f"cost({lists['Currency']})"] = df2[f"cost({lists['Currency']})"].astype(float)
-#                 #df.to_excel(rf"C:\Users\35386\Documents\projects\seleniumRyanair\{departure}_{arrival}_{datetartCopy}_{enddateCopy}_{timeNow}.xlsx", index = False)
-
-#     FlightPath["startDate"]  =  datetime.datetime.strptime(datetartCopy, "%Y-%m-%d") # reseting the dates back for the second run if needed
-
-#     newDF = df.merge(df2, left_on='Date', right_on='Date')
-#     if newDF.shape[0] == 0:
-#         print("Nothing to Merge")
-#         sys.exit()
-
-#     ########### Post processing ####################
-
-#     columns = [i for i in newDF.columns if "£"  in i]
-#     newDF["Total(€)"]  = newDF["cost(€)"]
-
-#     for pound in columns:
-#         newDF[f"{pound}_Convert"] =  newDF[pound].apply(lambda x: currConvert.convert(x, 'GBP', 'EUR', ForexFileData['date_to_use']))
-#         newDF["Total(€)"] = newDF["Total(€)"] + newDF[f"{pound}_Convert"]
-
-
-
-#     newDF["datetimeDepartX"]= [datetime.datetime.strptime(i, "%H:%M") for i in newDF["DepartTime_x"] ]
-#     newDF["datetimeArriveX"] = [datetime.datetime.strptime(i, "%H:%M") for i in newDF["ArrivalTime_x"] ]
-
-#     newDF["datetimeDepartY"]= [datetime.datetime.strptime(i, "%H:%M") for i in newDF["DepartTime_y"] ]
-#     newDF["datetimeArriveY"] = [datetime.datetime.strptime(i, "%H:%M") for i in newDF["ArrivalTime_y"] ]
-
-#     newDF['suits'] = np.where(newDF["datetimeArriveX"]  <=  newDF["datetimeDepartY"] , True, False)
-#     newDF['layovertime'] =  np.where(newDF["suits"] == True, newDF["datetimeDepartY"] - newDF["datetimeArriveX"], False  ) 
-#     newDF['layovertime'] =  newDF['layovertime'].astype(str)
-#     newDF["TotalTravelTime"] =  np.where(newDF["suits"] == True, newDF["datetimeArriveY"] - newDF["datetimeDepartX"] , False  ) 
-#     newDF['TotalTravelTime'] =  newDF['TotalTravelTime'].astype(str)
-#     newDF["Total(€)"] = newDF["Total(€)"].apply(lambda x: round(x,2))
-
-#     newDF = newDF[newDF["suits"] == True]
-    
-#     # Full set of columns
-#     # newDF = newDF["departure_x",
-#     #             "Arrival_x",
-#     #             "Date",
-#     #             "day_x"	,
-#     #             "month_x",
-#     #             "DepartTime_x",
-#     #             "ArrivalTime_x",
-#     #             "cost(€)",
-#     #             "url_x",
-#     #             "departure_y",
-#     #             "Arrival_y",
-#     #             "day_y",
-#     #             "month_y",
-#     #             "DepartTime_y",
-#     #             "ArrivalTime_y",
-#     #             "cost(£)",
-#     #             "url_y",
-#     #             "Total(€)",
-#     #             "cost(£)_Convert",
-#     #             "datetimeDepartX",
-#     #             "datetimeArriveX",
-#     #             "datetimeDepartY",
-#     #             "datetimeArriveY",
-#     #             "suits",
-#     #             "layovertime",
-#     #             "TotalTravelTime"]
-
-
-#     # Trimmed Columns
-#     newDF = newDF[["departure_x",
-#                 "Arrival_x",
-#                 "Date",
-#                 "day_x",
-#                 "month_x",
-#                 "DepartTime_x",
-#                 "ArrivalTime_x",
-#                 "departure_y",
-#                 "Arrival_y",
-#                 "DepartTime_y",
-#                 "ArrivalTime_y",
-#                 "Total(€)",
-#                 "layovertime",
-#                 "TotalTravelTime",
-#                 "url_x",
-#                 "url_y"]]
-
-#     ################################# END POSTPROCESSING ##############################
-
-#     #newDF = action.DirectFlightDF("Knock", "Milan Bergamo", newDF)
-    
-
-#     newDF.to_excel(rf"C:\Users\35386\Documents\projects\seleniumRyanair\{FlightPath['From']}_TO_{FlightPath['To']}_{datetartCopy}_{enddateCopy}_{timeNow}.xlsx", index  = False)
-
-#     driver.close()
-
-
-# main()
-
+##############################################################################################################################################################################################################################################################################################################################################################################
+##########################################################################################################################
+##########################################################################################################################
+##########################################################################################################################
+##########################################################################################################################
+##########################################################################################################################
 
 
 class FlightDataCreator():
 
-    def __init__(self, startDate = None, endDate = None) -> None:
-        self.airportDict = {"London Stansted": "STN",
-        "London Luton": "LTN",
-        "Ancona":"AOI",
-        "Bologna": "BLQ",
-        "Knock": "NOC",
-        "Dublin": "DUB",
-        "Rimini": "RMI",
-        "Milan Bergamo": "BGY",
-        "LondonAll": "LON",
-        "Pescara": "PSR",
-        "Perugia": "PEG",
-        "MilanAll": "MIL",
-        "CHECKURL": ["LON", "MIL"] # add here if you user the all selection eg.  London ALL
-        }
+    def __init__(self, airportdf = None , flighDetails =None) -> None:
+        self.currentDF  = None
+        self.airportdf = airportdf
+        self.flightDetails = flighDetails
+
 
         self.XPathsDict = {
-        "Button1": '//*[@id="cookie-popup-with-overlay"]/div/div[3]/button[2]', # first button to verify cookies
-        "FlightList": '/html/body/flights-root/div/div/div/div/flights-lazy-content/flights-summary-container/flights-summary/div/div[1]/journey-container/journey/flight-list'
-        "So"
+            "Button1": '//*[@id="cookie-popup-with-overlay"]/div/div[3]/button[2]', # first button to verify cookies
+            "FlightList": "/html/body/flights-root/div/div/div/div/flights-lazy-content/flights-summary-container/flights-summary/div/div[1]/journey-container/journey/flight-list/div",
+            
+            "List1": '/html/body/flights-root/div/div[1]/div/div/flights-lazy-content/flights-summary-container/flights-summary/div/div[1]/journey-container/journey/div/div[2]/div/carousel-container/carousel/div/ul',
+            "List4Button": [ "/html/body/flights-root/div/div[1]/div/div/flights-lazy-content/flights-summary-container/flights-summary/div/div[1]/journey-container/journey/div/div[2]/div/carousel-container/carousel/div/ul/li[4]",
+                            "/html/body/flights-root/div/div/div/div/flights-lazy-content/flights-summary-container/flights-summary/div/div[1]/journey-container/journey/div/div[2]/div/carousel-container/carousel/div/ul/li[4]"],
+            "SorryNoFilightAvailable": "/html/body/flights-root/div/div/div/div/flights-lazy-content/flights-summary-container/flights-summary/div/div[1]/journey-container/journey/flight-list/p",
+            "ErrorButton": '//*[@id="ry-modal-portal"]/div/trip-error-handling-modal/div/div[2]/button'
         }
-
-        self.startDate = datetime.date(2022, 3, 1 ) 
-        self.endDate = datetime.date(2022, 3, 4)
+        self.startDate = startDate or datetime.date(2022, 3, 1 ) 
+        self.endDate = endDate or datetime.date(2022, 3, 4)
+        
+        # Dates Here
+        #startDate = datetime.date.today()
+        self.strOneWayStartCopy = self.flightDetails["OneWay"]["startDate"].strftime("%Y-%m-%d")
+        self.strOneWayStartEndCopy = self.flightDetails["OneWay"]["endDate"].strftime("%Y-%m-%d")
+        self.strReturnEndCopy =self.flightDetails["return"]["startDate"].strftime("%Y-%m-%d")
+        self.strReturnEndCopy =self.flightDetails["return"]["endDate"].strftime("%Y-%m-%d")
+        self.timeNow = datetime.datetime.now().strftime("%Y-%m-%d%H%m%S")
         self.options = Options()
+
+        self.options.add_argument("--start-maximized")
         #self.options.add_argument('--headless')
 
 
+
         self.driver = webdriver.Chrome(chrome_options=self.options)
-        self.FlightPath = {
+        self.action = Actions(self.driver, self.XPathsDict, airportdf = self.airportdf,FligthPath = self.flightDetails)
+        self.ForexFileData = self.action.DownloadForexFile()
+        self.currConvert = CurrencyConverter(self.ForexFileData['filename'], fallback_on_missing_rate=True)
 
-            "Connection1": {"departure":self.airportDict['MilanAll'],
-                            "arrival": self.airportDict['LondonAll']},
 
-            "Connection2": {"departure":self.airportDict['LondonAll'],
-                            "arrival": self.airportDict['Knock']},
-            
+    def CheckIfAirportIsAll(self,df2, airport):
+        ''''
+        Checks if the airport is part of a city e.g. Milan , London rather than an airport
+        '''
+        try:
+                
+            for row in df2.iterrows():
+                if row[1]["IATA"] == airport and row[1]["CheckAll"] == 1:
+                    
+                    return True
+        except Exception as err:
+            print(err)
+            return False
+
+
+    def GetUrl(self, flightType  = None, connection = None, flightInfo = None):
+        departure = self.flightDetails[flightType][connection]['departure']
+        arrival = self.flightDetails[flightType][connection]['arrival']
+        dateStr = self.strOneWayStartCopy
+        url = None
+
+        if self.CheckIfAirportIsAll(self.airportdf, departure) or self.CheckIfAirportIsAll(self.airportdf, arrival):
+            if self.CheckIfAirportIsAll(self.airportdf, departure) and self.CheckIfAirportIsAll(self.airportdf, arrival):
+                url = f"https://www.ryanair.com/ie/en/trip/flights/select?adults=1&teens=0&children=0&infants=0&dateOut={dateStr}&dateIn=&isConnectedFlight=false&isReturn=false&discount=0&promoCode=&originMac={departure}&destinationMac={arrival}&tpAdults=1&tpTeens=0&tpChildren=0&tpInfants=0&tpStartDate={dateStr}&tpEndDate=&tpDiscount=0&tpPromoCode=&tpOriginMac={departure}&tpDestinationMac={arrival}"
+            elif self.CheckIfAirportIsAll(self.airportdf, departure):
+                url = f"https://www.ryanair.com/ie/en/trip/flights/select?adults=1&teens=0&children=0&infants=0&dateOut={dateStr}&dateIn=&isConnectedFlight=false&discount=0&isReturn=false&promoCode=&originMac={departure}&destinationIata={arrival}&tpAdults=1&tpTeens=0&tpChildren=0&tpInfants=0&tpStartDate={dateStr}&tpEndDate=&tpDiscount=0&tpPromoCode=&tpOriginMac={departure}&tpDestinationIata={arrival}"
+            elif self.CheckIfAirportIsAll(self.airportdf, arrival):
+                url = f"https://www.ryanair.com/ie/en/trip/flights/select?adults=1&teens=0&children=0&infants=0&dateOut={dateStr}&dateIn=&isConnectedFlight=false&discount=0&isReturn=false&promoCode=&originMac={departure}&destinationIata={arrival}&tpAdults=1&tpTeens=0&tpChildren=0&tpInfants=0&tpStartDate={dateStr}&tpEndDate=&tpDiscount=0&tpPromoCode=&tpOriginMac={departure}&tpDestinationIata={arrival}"
+        else:
+            # there is no ALL search terms in the arrival or destinations 
+            url = f"https://www.ryanair.com/ie/en/trip/flights/select?adults=1&teens=0&children=0&infants=0&dateOut={dateStr}&dateIn=&isConnectedFlight=false&isReturn=false&discount=0&promoCode=&originIata={departure}&destinationIata={arrival}&tpAdults=1&tpTeens=0&tpChildren=0&tpInfants=0&tpStartDate={dateStr}&tpEndDate=&tpDiscount=0&tpPromoCode=&tpOriginIata={departure}&tpDestinationIata={arrival}"
         
-            "startDate": self.startDate,
-            "endDate": self.endDate
-        }
-        self.FlightPath["From"]= self.FlightPath['Connection1']['departure']
-        self.FlightPath["To"]= self.FlightPath['Connection2']['arrival']
+        return url
 
+    def GetFlights(self,  returnFlight = False):
+        pass
 
-    def FLightFinder(self):
-        action = Actions(self.driver, self.XPathsDict, FligthPath = self.FlightPath, airportList=self.airportDict )
-        ForexFileData = action.DownloadForexFile()
-        currConvert = CurrencyConverter(ForexFileData['filename'], fallback_on_missing_rate=True)
-        # Dates Here
-        #startDate = datetime.date.today()
-        datetartCopy = self.FlightPath["startDate"].strftime("%Y-%m-%d")
-        timeNow = datetime.datetime.now().strftime("%Y-%m-%d%H%m%S")
-
-        delta = datetime.timedelta(days=1)
-
-        dfList = []
-        for flightInfo in self.FlightPath:
-            listOne = []
-            if "Connection" in flightInfo:
-                self.FlightPath["startDate"]  =  datetime.datetime.strptime(datetartCopy, "%Y-%m-%d") # reseting the dates back for the second run if needed
-
-                departure = self.FlightPath[flightInfo]['departure']
-                arrival = self.FlightPath[flightInfo]['arrival']
-                    
-
-                while self.FlightPath["startDate"].date() <= self.FlightPath["endDate"]:
-                    dateStr = self.FlightPath["startDate"].strftime("%Y-%m-%d")
-                    if arrival in self.airportDict["CHECKURL"] or departure in self.airportDict["CHECKURL"]:
-                        if arrival in self.airportDict["CHECKURL"] and departure in self.airportDict["CHECKURL"]:
-                            url = f"https://www.ryanair.com/ie/en/trip/flights/select?adults=1&teens=0&children=0&infants=0&dateOut={dateStr}&dateIn=&isConnectedFlight=false&isReturn=false&discount=0&promoCode=&originMac={departure}&destinationMac={arrival}&tpAdults=1&tpTeens=0&tpChildren=0&tpInfants=0&tpStartDate={dateStr}&tpEndDate=&tpDiscount=0&tpPromoCode=&tpOriginMac={departure}&tpDestinationMac={arrival}"
-                        elif departure in self.airportDict["CHECKURL"]:
-                            url = f"https://www.ryanair.com/ie/en/trip/flights/select?adults=1&teens=0&children=0&infants=0&dateOut={dateStr}&dateIn=&isConnectedFlight=false&discount=0&isReturn=false&promoCode=&originMac={departure}&destinationIata={arrival}&tpAdults=1&tpTeens=0&tpChildren=0&tpInfants=0&tpStartDate={dateStr}&tpEndDate=&tpDiscount=0&tpPromoCode=&tpOriginMac={departure}&tpDestinationIata={arrival}"
-                        elif arrival in self.airportDict["CHECKURL"]:
-                            url = f"https://www.ryanair.com/ie/en/trip/flights/select?adults=1&teens=0&children=0&infants=0&dateOut={dateStr}&dateIn=&isConnectedFlight=false&discount=0&isReturn=false&promoCode=&originMac={departure}&destinationIata={arrival}&tpAdults=1&tpTeens=0&tpChildren=0&tpInfants=0&tpStartDate={dateStr}&tpEndDate=&tpDiscount=0&tpPromoCode=&tpOriginMac={departure}&tpDestinationIata={arrival}"
-                    else:
-                        # there is no ALL search terms in the arrival or destinations 
-                        url = f"https://www.ryanair.com/ie/en/trip/flights/select?adults=1&teens=0&children=0&infants=0&dateOut={dateStr}&dateIn=&isConnectedFlight=false&isReturn=false&discount=0&promoCode=&originIata={departure}&destinationIata={arrival}&tpAdults=1&tpTeens=0&tpChildren=0&tpInfants=0&tpStartDate={dateStr}&tpEndDate=&tpDiscount=0&tpPromoCode=&tpOriginIata={departure}&tpDestinationIata={arrival}"
-                    
-                    self.driver.get(url)
-                    time.sleep(5)
-
-                    action.ClickButton("Button1")
-                    currencySymbol = ""
-                    if not action.CheckFlightToday():
-                        lists = action.AcquireListOfFlights(driver = self.driver,dateStr = dateStr, departure = departure, arrival = arrival, url = url)
-                        listOne.extend(lists["listOne"])
-                    self.FlightPath["startDate"] += delta # increment day by 1
-                    enddateCopy = self.FlightPath["endDate"].strftime("%Y-%m-%d")
-
-
-                c = ["departure","Arrival","Date","day", "month", "DepartTime","ArrivalTime",f"cost({lists['Currency']})", "url" ]
-            
-                if flightInfo == "Connection1":
-                    df = pd.DataFrame(listOne, columns = c)
-                    df[f"cost({lists['Currency']})"] = df[f"cost({lists['Currency']})"].astype(float)
-                if flightInfo == "Connection2":
-                    df2 = pd.DataFrame(listOne, columns = c)
-                    df2[f"cost({lists['Currency']})"] = df2[f"cost({lists['Currency']})"].astype(float)
-                    #df.to_excel(rf"C:\Users\35386\Documents\projects\seleniumRyanair\{departure}_{arrival}_{datetartCopy}_{enddateCopy}_{timeNow}.xlsx", index = False)
-
-        self.FlightPath["startDate"]  =  datetime.datetime.strptime(datetartCopy, "%Y-%m-%d") # reseting the dates back for the second run if needed
+    def MergeDf(self, flightType = None):
 
         newDF = df.merge(df2, left_on='Date', right_on='Date')
-        if newDF.shape[0] == 0:
-            print("Nothing to Merge")
-            sys.exit()
 
+    def MergeConnections(self, flightType = None, lists = None):
+        
+        if  isinstance(self.flightDetails[flightType]["Connection1"]["df"],pd.DataFrame ) and \
+            isinstance(self.flightDetails[flightType]["Connection2"]["df"],pd.DataFrame ) and \
+            self.flightDetails[flightType]["MergeConnectDF"] == None:
+            
+            self.flightDetails[flightType]["MergeConnectDF"] = pd.DataFrame()
+
+            self.flightDetails[flightType]["MergeConnectDF"] = self.flightDetails[flightType]["Connection1"]["df"].merge(self.flightDetails[flightType]["Connection2"]["df"], left_on='Date', right_on='Date')
+            #self.flightDetails[flightType]["MergeConnectDF"][f"cost({lists['Currency']})"] = self.flightDetails[flightType]["MergeConnectDF"][f"cost({lists['Currency']})"].astype(float)
+
+            if self.flightDetails[flightType]["MergeConnectDF"].empty:
+                print("Nothing to Merge")
+                return False
+        
+        return True
+
+        
+
+    def PostProcessDFs(self, flightType = None):
+        newDF = self.flightDetails[flightType]["MergeConnectDF"]
+        
         ########### Post processing ####################
 
         columns = [i for i in newDF.columns if "£"  in i]
-        newDF["Total(€)"]  = newDF["cost(€)"]
-
-        for pound in columns:
-            newDF[f"{pound}_Convert"] =  newDF[pound].apply(lambda x: currConvert.convert(x, 'GBP', 'EUR', ForexFileData['date_to_use']))
-            newDF["Total(€)"] = newDF["Total(€)"] + newDF[f"{pound}_Convert"]
+        columnsFull = newDF.columns
+        if "cost(€)_x" in columnsFull and "cost(€)_y" in columnsFull:
+            newDF["Total(€)"]  = newDF["cost(€)_x"] + newDF["cost(€)_y"]
+        elif len(columns) > 0:
+            for pound in columns:
+                newDF[f"{pound}_Convert"] =  newDF[pound].apply(lambda x: self.currConvert.convert(x, 'GBP', 'EUR', self.ForexFileData['date_to_use']))
+                newDF["Total(€)"] = newDF["cost(€)"] + newDF[f"{pound}_Convert"]
 
 
 
@@ -518,44 +400,18 @@ class FlightDataCreator():
         newDF["Total(€)"] = newDF["Total(€)"].apply(lambda x: round(x,2))
 
         newDF = newDF[newDF["suits"] == True]
-        
-        # Full set of columns
-        # newDF = newDF["departure_x",
-        #             "Arrival_x",
-        #             "Date",
-        #             "day_x"	,
-        #             "month_x",
-        #             "DepartTime_x",
-        #             "ArrivalTime_x",
-        #             "cost(€)",
-        #             "url_x",
-        #             "departure_y",
-        #             "Arrival_y",
-        #             "day_y",
-        #             "month_y",
-        #             "DepartTime_y",
-        #             "ArrivalTime_y",
-        #             "cost(£)",
-        #             "url_y",
-        #             "Total(€)",
-        #             "cost(£)_Convert",
-        #             "datetimeDepartX",
-        #             "datetimeArriveX",
-        #             "datetimeDepartY",
-        #             "datetimeArriveY",
-        #             "suits",
-        #             "layovertime",
-        #             "TotalTravelTime"]
-
 
         # Trimmed Columns
         newDF = newDF[["departure_x",
                     "Arrival_x",
+                    "flightType_x",
                     "Date",
                     "day_x",
                     "month_x",
                     "DepartTime_x",
                     "ArrivalTime_x",
+                    "flightType_y",
+                    "Date",
                     "departure_y",
                     "Arrival_y",
                     "DepartTime_y",
@@ -566,20 +422,155 @@ class FlightDataCreator():
                     "url_x",
                     "url_y"]]
 
-        ################################# END POSTPROCESSING ##############################
+        self.flightDetails[flightType]["MergeConnectDF"] = newDF
 
-        #newDF = action.DirectFlightDF("Knock", "Milan Bergamo", newDF)
-        
 
-        newDF.to_excel(rf"C:\Users\35386\Documents\projects\seleniumRyanair\{self.FlightPath['From']}_TO_{self.FlightPath['To']}_{datetartCopy}_{enddateCopy}_{timeNow}.xlsx", index  = False)
+    def FLightFinder(self):
+
+
+        delta = datetime.timedelta(days=1)
+
+        dfList = []
+        listOne = []
+        flightChoice = ["OneWay"]
+
+        for flightType in flightChoice:
+            
+            connection = [i for i in self.flightDetails[flightType].keys() if "Connection" in i]
+            for connections in connection:
+                listOne = []
+                departure = self.flightDetails[flightType][connections]['departure']
+                arrival = self.flightDetails[flightType][connections]['arrival']
+                dateStr = self.strOneWayStartCopy
+
+
+                url = self.GetUrl(flightType = flightType, connection = connections,  flightInfo =self.flightDetails[flightType])
+                print("here")
+
+                        
+                self.driver.get(url)
+                time.sleep(5)
+
+                self.action.ClickButton("Button1")
+                self.action.ClickButton("ErrorButton")
+
+
+                # Get the Unordered List
+                DatetimeURLList = self.action.ConstructDatetimesFromList(flightType= flightType, url = url  )
+                while self.action.CheckUnlistValidaty(flightType= flightType): # checks that the current data does not match enddate
+
+                
+            
+                    if not self.action.CheckFlightToday():
+                        lists = self.action.AcquireListOfFlights(driver = self.driver,flightType= flightType, dateStr = DatetimeURLList[2][1], departure = departure, arrival = arrival, url =  DatetimeURLList[2][2])
+
+                        listOne.extend(lists["listOne"])
+                    self.action.ClickButton("List4Button")
+                    DatetimeURLList  =self.action.ConstructDatetimesFromList(flightType= flightType, url = url ) # get the new list
+
+
+                    c = ["departure","Arrival","Date","day", "month", "DepartTime","ArrivalTime",f"cost({lists['Currency']})", "flightType", "url" ]
+            
+
+                    self.flightDetails[flightType][connections]["df"] = pd.DataFrame(listOne, columns = c)
+                    self.flightDetails[flightType][connections]["df"][f"cost({lists['Currency']})"] =  self.flightDetails[flightType][connections]["df"][f"cost({lists['Currency']})"].astype(float)
+                    #df.to_excel(rf"C:\Users\35386\Documents\projects\seleniumRyanair\{departure}_{arrival}_{datetartCopy}_{enddateCopy}_{timeNow}.xlsx", index = False)
+            self.MergeConnections(flightType=flightType, lists = lists)
+
+            self.PostProcessDFs(flightType=flightType)
+
+
+
+        departure = self.flightDetails[flightType]["Connection1"]["departure"]
+        arrival  = self.flightDetails[flightType]["Connection2"]["arrival"]
+
+        self.flightDetails[flightType]["MergeConnectDF"].to_excel(rf"C:\Users\35386\Documents\projects\seleniumRyanair\{departure}_TO_{arrival}_{self.strOneWayStartCopy}_{self.strOneWayStartEndCopy}_{self.timeNow}.xlsx", index  = False)
 
         self.driver.close()
+        
+
+        return self.flightDetails[flightType]["MergeConnectDF"]
 
 
 
     def DataMerger(self):
         pass
 
-FlightDataCreator().FLightFinder()
 
+
+
+
+
+def Getairports(df2, airport):
+    try:
+            
+        for row in df2.iterrows():
+            print(row[1]["Airport"])
+            if row[1]["Airport"] == airport:
+                
+                return row[1]["IATA"]
+    except Exception as err:
+        print(err)
+        return False
+        
+
+
+    
+
+# PARAMETERS #
+addreturn = True
+
+startDest = "MilanAll"
+connection = "LondonAll"
+destination = "Ireland West Airport Knock" 
+startDate =  datetime.date(2022, 3, 4 ) 
+endDate = datetime.date(2022, 3, 5)
+returnStartDate =datetime.date(2022, 4, 1 ) 
+returnEndDate = datetime.date(2022, 4, 4)
+#"Ireland West Airport Knock"
+
+
+path= r"C:\Users\35386\Documents\projects\seleniumRyanair\Airports\airports.csv"
+airportdf =  pd.read_csv(path)
+flighdetails = {
+                "addReturn": addreturn,
+                "OneWay": {
+                    "startDate": startDate ,
+                    "endDate": endDate,
+
+                    "Connection1": {"departure":Getairports(airportdf,startDest),
+                                    "arrival": Getairports(airportdf,connection),
+                                    "df": None},
+
+                    "Connection2": {"departure":Getairports(airportdf, connection),
+                                    "arrival": Getairports(airportdf,destination),
+                                    "df": None},
+
+                    "MergeConnectDF" : None
+                        
+                        },
+                
+                "return": {
+                    "startDate": returnStartDate ,
+                    "endDate": returnEndDate,
+
+                    "Connection1": {"departure":Getairports(airportdf,destination),
+                                    "arrival": Getairports(airportdf,connection),
+                                    "df": None},
+
+                    "Connection2": {"departure":Getairports(airportdf, connection),
+                                    "arrival": Getairports(airportdf,startDest),
+                                    "df": None},
+
+                    "MergeConnectionDF" : None
+                        },
+}
+
+
+
+
+
+
+df = FlightDataCreator(airportdf = airportdf, flighDetails= flighdetails).FLightFinder()
+print("done")
     # %%
